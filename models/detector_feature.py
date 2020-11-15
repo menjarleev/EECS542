@@ -90,7 +90,7 @@ class SimpleDetector(nn.Module):
                 ):
         """
         :param images: [batch_size, max_num_objects, 2048]
-        :param boxes:  [batch_size, max_num_objects, 7] Padded boxes
+        :param boxes:  [batch_size, max_num_objects, 4] Padded boxes
         :param box_mask: [batch_size, max_num_objects] Mask for whether or not each box is OK
         :return: object reps [batch_size, max_num_objects, dim]
         """

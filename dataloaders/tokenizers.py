@@ -8,6 +8,8 @@ class VisualCometTokenizer(GPT2Tokenizer):
                  unk_token="<|endoftext|>",
                  bos_token="<|endoftext|>",
                  eos_token="<|endoftext|>",
+                 begin_pose="<|b_po|>",
+                 end_pose="<|e_po|>",
                  begin_img="<|b_img|>",
                  end_img="<|e_img|>",
                  begin_event="<|b_ev|>",
@@ -33,19 +35,21 @@ class VisualCometTokenizer(GPT2Tokenizer):
         self.end_event = end_event
         self.begin_place = begin_place
         self.end_place = end_place
+        self.begin_pose = begin_pose
+        self.end_pose = end_pose
         self.begin_inferences = begin_inferences
         self.end_inference = end_inference
         self.det_tokens = ['<|det%d|>' % i for i in range(50)]
         self.add_special_tokens({
-            "additional_special_tokens": [self.begin_img, self.end_img, self.begin_event, self.end_event,
-                                          self.begin_place, self.end_place, self.end_inference]
+            "additional_special_tokens": [self.begin_pose, self.end_pose, self.begin_img, self.end_img, self.begin_event,
+                                          self.end_event, self.begin_place, self.end_place, self.end_inference]
                                          + list(self.begin_inferences.values()) + self.det_tokens
         })
 
     def decode(self, token_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True):
         text = super().decode(token_ids, False, clean_up_tokenization_spaces)
-        tokens2remove = [self.begin_img, self.end_img, self.begin_event, self.end_event,
-                         self.end_place, self.end_inference, self.unk_token] + list(self.begin_inferences.values())
+        tokens2remove = [self.begin_pose, self.end_pose, self.begin_img, self.end_img, self.begin_event, self.end_event,
+                         self.end_place,  self.end_inference, self.unk_token] + list(self.begin_inferences.values())
         if skip_special_tokens:
             for t in tokens2remove:
                 text = text.replace(t, ' ')

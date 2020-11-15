@@ -8,6 +8,7 @@ from transformers.modeling_bert import BertLayerNorm as LayerNorm
 from transformers.modeling_gpt2 import Block
 
 from models.detector_feature import SimpleDetector
+from models.pose_feature import PoseExtractor
 from models.pytorch_misc import pack_sequence, pad_sequence
 
 class GPT2VisionAttentiveTransformer(GPT2PreTrainedModel):
@@ -30,6 +31,10 @@ class GPT2VisionAttentiveTransformer(GPT2PreTrainedModel):
         self.init_weights()
 
         self.detector = SimpleDetector(pretrained=True, final_dim=config.n_embd, use_bbox=config.use_bbox)
+        # TODO: lingfei - add config.pose_dim
+        self.pose_extractor = PoseExtractor(pose_dim=config.pose_dim,
+                                           use_bbox=config.use_bbox,
+                                           final_dim=config.n_embd, )
 
     def _resize_token_embeddings(self, new_num_tokens):
         """
@@ -54,6 +59,7 @@ class GPT2VisionAttentiveTransformer(GPT2PreTrainedModel):
                 token_type_ids=None,
                 past=None,
                 head_mask=None,
+                pose_feats=None,
                 img_feats=None,
                 boxes=None,
                 boxes_mask=None,
@@ -90,7 +96,30 @@ class GPT2VisionAttentiveTransformer(GPT2PreTrainedModel):
         position_ids = position_ids.view(-1, position_ids.size(-1))
 
         inputs_embeds = self.wte(input_ids)
-
+        # MARK - 2 ways to encode pose.
+        # 1. use person grounding + pose feature
+        # 2. use explicit pose coordinate + person grounding
+        # add pose_feat here
+        if pose_feats is not None:
+            # For each instance in a batch. position 0 is a special token indicating start of
+            # visual features. Position 1 onwards are reserved for visual features.
+            # inputs_embeds[: 1: num_max_boxes, :] --> `num_max_boxes` is an setting in VCRDataset
+            pose_output = self.pose_extractor(pose_feats=pose_feats, boxes=boxes, box_mask=boxes_mask)
+            pose_embedding = pose_output['pose_reps']
+            # person grounding is here
+            if self.use_person_ids:
+                pack_person_ids = pack_sequence(person_ids, boxes_mask)
+                person_embeddings = self.wte(pack_person_ids)
+                person_embeddings = pad_sequence(person_embeddings, boxes_mask.sum(1).tolist())
+                pose_embedding = pose_embedding + person_embeddings
+            #     deprecate use_subject_ids for pose, because only human can measure pose
+            # if self.use_subject_ids:
+            #     pack_subject_ids = pack_sequence(subject_ids, boxes_mask)
+            #     subject_embeddings = self.subject_embed(pack_subject_ids)
+            #     subject_embeddings = pad_sequence(subject_embeddings, boxes_mask.sum(1).tolist())
+            #     pose_embedding = pose_embedding + subject_embeddings
+            #   pose_embedding = 15
+            inputs_embeds[:, 1:pose_embedding.size(1)+1, :] = pose_embedding
         if img_feats is not None:
             # For each instance in a batch. position 0 is a special token indicating start of
             # visual features. Position 1 onwards are reserved for visual features.
@@ -98,6 +127,7 @@ class GPT2VisionAttentiveTransformer(GPT2PreTrainedModel):
             vision_output = self.detector(img_feats=img_feats, boxes=boxes, box_mask=boxes_mask, obj_labels=objects)
             vision_embeddings = vision_output['obj_reps']
             vision_obj_loss = vision_output['cnn_regularization_loss']
+            # person grounding is here
             if self.use_person_ids:
                 pack_person_ids = pack_sequence(person_ids, boxes_mask)
                 person_embeddings = self.wte(pack_person_ids)
@@ -108,7 +138,7 @@ class GPT2VisionAttentiveTransformer(GPT2PreTrainedModel):
                 subject_embeddings = self.subject_embed(pack_subject_ids)
                 subject_embeddings = pad_sequence(subject_embeddings, boxes_mask.sum(1).tolist())
                 vision_embeddings = vision_embeddings + subject_embeddings
-            inputs_embeds[:, 1:vision_embeddings.size(1)+1, :] = vision_embeddings
+            inputs_embeds[:, 17:vision_embeddings.size(1)+17, :] = vision_embeddings
 
         # if aux_feats is not None:
         #     inputs_embeds[:,169] = aux_feats
@@ -181,6 +211,7 @@ class GPT2VisionAttentiveLMHead(GPT2PreTrainedModel):
                 labels=None,
                 past=None,
                 head_mask=None,
+                pose_feats=None,
                 img_feats=None,
                 boxes=None,
                 boxes_mask=None,
@@ -197,6 +228,7 @@ class GPT2VisionAttentiveLMHead(GPT2PreTrainedModel):
                                                token_type_ids=token_type_ids,
                                                past=past,
                                                head_mask=head_mask,
+                                               pose_feats=pose_feats,
                                                img_feats=img_feats,
                                                boxes=boxes,
                                                boxes_mask=boxes_mask,

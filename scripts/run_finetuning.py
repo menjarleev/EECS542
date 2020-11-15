@@ -54,6 +54,7 @@ def load_and_cache_vcg_examples(args, tokenizer):
         file_path=args.data_dir,
         tokenizer=tokenizer,
         max_seq_len=args.max_seq_len,
+        include_pose=args.include_pose,
         include_image=args.include_image,
         include_text=args.include_text,
         mode=args.mode,
@@ -145,15 +146,24 @@ def train(args, dataset, model, tokenizer):
 
         for step, data_input in enumerate(epoch_iterator):
             # inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, torch.clone(batch))
-            if args.include_image:
+            if args.include_image and args.include_pose:
+                inputs, labels, pose_feats, img_feats, boxes, boxes_mask, objects, segments, person_ids, subject_ids = [
+                    d.to(args.device) for d in data_input]
+            elif args.include_image:
                 inputs, labels, img_feats, boxes, boxes_mask, objects, segments, person_ids, subject_ids = [
                     d.to(args.device) for d in data_input]
+                pose_feats = None
+            elif args.include_pose:
+                inputs, labels, pose_feats, boxes, boxes_mask, objects, segments, person_ids, subject_ids = [
+                    d.to(args.device) for d in data_input]
+                img_feats = None
             else:
                 inputs, labels = [d.to(args.device) for d in data_input]
-                img_feats, boxes, boxes_mask, objects, segments, person_ids, subject_ids = [None] * 7
+                pose_feats, img_feats, boxes, boxes_mask, objects, segments, person_ids, subject_ids = [None] * 7
 
+            # set require_grad = True
             model.train()
-            outputs = model(inputs, labels=labels, img_feats=img_feats, boxes=boxes, boxes_mask=boxes_mask, objects=objects, segments=segments,
+            outputs = model(inputs, labels=labels, pose_feats=pose_feats, img_feats=img_feats, boxes=boxes, boxes_mask=boxes_mask, objects=objects, segments=segments,
                                     person_ids=person_ids, subject_ids=subject_ids)
             loss = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
 
@@ -328,6 +338,8 @@ def main():
                         choices=['inference', 'all',],
                         help="Use which text to train on [inference, all]. "
                              "Set 'all' to generate Event, Place, and Inference text. This refers to 'EP loss' in the paper.")
+    parser.add_argument("--no_pose", dest='include_pose', action='store_false',
+                        help='Do not use pose context to train the inference sentences')
     parser.add_argument("--no_image", dest='include_image', action='store_false',
                         help="Do not use image context to train the inference sentences.")
     parser.add_argument("--no_text", dest='include_text', action='store_false',
@@ -335,7 +347,7 @@ def main():
     parser.add_argument('--no_person_ids', dest='use_person_ids', action='store_false',
                         help="Use person id embeddings in visual features.")
     parser.add_argument('--no_subject_ids', dest='use_subject_ids', action='store_false',
-                        help="Use subejct embeddings in visual features.")
+                        help="Use subject embeddings in visual features.")
 
     parser.add_argument("--mlm", action='store_true',
                         help="Train with masked-language modeling loss instead of language modeling.")
@@ -485,6 +497,7 @@ def main():
     config.use_person_ids = args.use_person_ids
     config.use_subject_ids = args.use_subject_ids
     config.use_bbox = args.use_bbox
+    config.pose_dim = 6660
     print(config)
 
     model = model_class.from_pretrained(args.model_name_or_path,

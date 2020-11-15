@@ -16,7 +16,7 @@ from dataloaders.mask_utils import make_mask
 
 from utils.file_utils import read_and_parse_finetune_json, read_and_parse_generation_json
 
-from config import VCR_IMAGES_DIR, VCR_FEATURES_DIR
+from config import VCR_IMAGES_DIR, VCR_FEATURES_DIR, VCR_POSE_DIR
 
 # Here's an example json
 # {'img_fn': 'movieclips_Batman_v_Superman_Dawn_of_Justice/7HlSKPTYZhs@40.jpg',
@@ -42,26 +42,28 @@ def _pad_ids(ids, max_len):
     else:
         return ids + [0] * (max_len - len(ids))
 
-def _combine_and_pad_tokens(tokenizer: VisualCometTokenizer, tokens,
+def _combine_and_pad_tokens(tokenizer: VisualCometTokenizer, tokens, max_pose,
                             max_image, max_event, max_place, max_inference, max_seq_len):
     """
     :param tokenizer: tokenizer for the model
-    :param tokens: [[image_tokens], [event_tokens], [place_tokens], [inference_tokens] ]
+    :param tokens: [[pose_tokens], [image_tokens], [event_tokens], [place_tokens], [inference_tokens] ]
     :param max_seq_len: maximum sequence for concatenated tokens
-    :return: Padded tokens to max length for each set (image, event, place, inference) and concatenated version of the set
+    :return: Padded tokens to max length for each set (pose, image, event, place, inference) and concatenated version of the set
     """
     new_tokens = []
-    max_lens = [max_image, max_event, max_place, max_inference]
+    max_lens = [max_pose, max_image, max_event, max_place, max_inference]
     assert len(tokens) == len(max_lens)
     for i, t in enumerate(tokens):
         max_len = max_lens[i]
         if len(t) > max_len:
-            if i < 3:
+            if i < 4:
                 if i == 0:
-                    end_token = tokenizer.end_img
+                    end_token = tokenizer.end_pose
                 elif i == 1:
-                    end_token = tokenizer.end_event
+                    end_token = tokenizer.end_img
                 elif i == 2:
+                    end_token = tokenizer.end_event
+                elif i == 3:
                     end_token = tokenizer.end_place
                 t = t[:max_len - 1] + [end_token]
         else:
@@ -84,7 +86,8 @@ def vcg_record_to_tokens(tokenizer: VisualCometTokenizer,
     inference = record['inference_relation']
     inference_text = record['inference_text_name']
 
-    training_instance = [[tokenizer.begin_img] + [tokenizer.unk_token] * num_max_boxes + [tokenizer.end_img]]
+    training_instance = [[tokenizer.begin_pose] + [tokenizer.unk_token] * num_max_boxes + [tokenizer.end_pose]]
+    training_instance.append([tokenizer.begin_img] + [tokenizer.unk_token] * num_max_boxes + [tokenizer.end_img])
     training_instance.append([tokenizer.begin_event,event,tokenizer.end_event])
     training_instance.append([tokenizer.begin_place,place,tokenizer.end_place])
     training_instance.append([tokenizer.begin_inferences[inference], inference_text, tokenizer.end_inference])
@@ -132,20 +135,23 @@ class VCGDataset:
                  cache_dir=None,
                  overwrite_cache=False,
                  cache_postfix=None,
+                 include_pose=True,
                  include_image=False,
                  include_text=True,
                  mode='inference',
                  num_max_boxes=15,
                  only_use_relevant_dets=True,
                  ):
-        vcg_dir = os.path.dirname(file_path)
+        vcg_dir = file_path
         assert os.path.isdir(vcg_dir)
         self.include_image = include_image
         self.include_text = include_text
+        self.include_pose = include_pose
         self.only_use_relevant_dets = only_use_relevant_dets
 
         self.max_seq_len = max_seq_len
         self.num_max_boxes = num_max_boxes
+        self.max_pose = None
         self.max_image = None
         self.max_event = None
         self.max_place = None
@@ -175,6 +181,8 @@ class VCGDataset:
                 p = pickle.load(handle)
                 self.num_max_boxes = p['num_max_boxes']
                 self.max_image = p['max_image']
+                # max_pose should be the same as max_image
+                self.max_pose = p['max_pose']
                 self.max_event = p['max_event']
                 self.max_place = p['max_place']
                 self.max_inference = p['max_inference']
@@ -182,8 +190,9 @@ class VCGDataset:
                     examples[split], labels[split], records[split] = p['data'][split]
         else:
             print("Creating features from dataset file at {} with cache file name: {}".format(vcg_dir, cached_features_files))
-
+            # MARK - why self.num_max_boxes + 2 not self.num_max_boxes + 1?
             max_image = self.num_max_boxes + 2
+            max_pose = self.num_max_boxes + 2
             max_event = 0
             max_place = 0
             max_inference = 0
@@ -209,28 +218,29 @@ class VCGDataset:
                             record=record,
                             num_max_boxes=num_max_boxes,
                         )
-
                     tokens = [tokenizer.tokenize(" ".join(vt)) for vt in vcg_tokens]
-                    assert len(vcg_tokens) == 4
+                    # add pose so len(vcg_tokens) becomes 5
+                    assert len(vcg_tokens) == 5
                     if split == 'train':
-                        e_l, p_l, r_l = [len(vt) for vt in tokens[1:]]
+                        e_l, p_l, r_l = [len(vt) for vt in tokens[2:]]
                         max_event = max(max_event, e_l)
                         max_place = max(max_place, p_l)
                         max_inference = max(max_inference, r_l)
                     token_list.append(tokens)
                     text_list.append(vcg_tokens)
-                    idx+=1
+                    idx += 1
 
                 if split == 'train':
-                    print('max_image, max_event, max_place, max_inference:', max_image, max_event, max_place, max_inference)
+                    print('max_image, max_pose, max_event, max_place, max_inference:', max_image, max_pose, max_event, max_place, max_inference)
                     self.max_image = max_image
+                    self.max_pose = max_pose
                     self.max_event = max_event
                     self.max_place = max_place
                     self.max_inference = max_inference
 
                 idx = 0
                 for tokens in tqdm(token_list):
-                    padded_tokens = _combine_and_pad_tokens(tokenizer, tokens, max_image, max_event, max_place, max_inference, max_seq_len)
+                    padded_tokens = _combine_and_pad_tokens(tokenizer, tokens, max_pose, max_image, max_event, max_place, max_inference, max_seq_len)
                     tokenized_text = tokenizer.convert_tokens_to_ids(padded_tokens)
                     if not include_text: # mask out events and place text
                         inference_start_token_idx = tokenizer.convert_tokens_to_ids([tokenizer.begin_event])[0]
@@ -252,7 +262,7 @@ class VCGDataset:
                         print("Tokenized Text: {}".format(tokenized_text))
                         print("Labels: {}".format(lm_labels))
                         print("********\n")
-                    idx+=1
+                    idx += 1
 
             print("Saving features into cached file %s", cached_features_files)
             with open(cached_features_files, 'wb') as handle:
@@ -261,6 +271,7 @@ class VCGDataset:
                     {
                         'num_max_boxes' : self.num_max_boxes,
                         'max_image' : self.max_image,
+                        'max_pose' : self.max_pose,
                         'max_event' : self.max_event,
                         'max_place' : self.max_place,
                         'max_inference' : self.max_inference,
@@ -270,6 +281,7 @@ class VCGDataset:
 
         for split in splits:
             self.vcg_dataset[split] = VCGLoader(examples[split], labels[split], records[split], split, tokenizer,
+                                                include_pose=self.include_pose,
                                                 include_image=self.include_image,
                                                 num_max_boxes=self.num_max_boxes,
                                                 only_use_relevant_dets=self.only_use_relevant_dets)
@@ -277,12 +289,13 @@ class VCGDataset:
     def get_dataset(self, split):
         return self.vcg_dataset[split]
 
-def _to_boxes_and_masks(features, boxes, obj_labels, segments, num_max_boxes):
+def _to_boxes_and_masks(poses, features, boxes, obj_labels, segments, num_max_boxes):
     num_boxes = len(boxes)
     if num_boxes > num_max_boxes:
-        return features[:num_max_boxes,:], boxes[:num_max_boxes,:], obj_labels[:num_max_boxes], \
+        return poses[:num_max_boxes,:], features[:num_max_boxes,:], boxes[:num_max_boxes,:], obj_labels[:num_max_boxes], \
                segments[:num_max_boxes,:], [1] * num_max_boxes
     d = len(features[0])
+    padded_poses = np.concatenate((poses, np.zeros((num_max_boxes - num_boxes, d))))
     padded_features = np.concatenate((features, np.zeros((num_max_boxes - num_boxes, d))))
     padded_boxes = np.concatenate((boxes, np.zeros((num_max_boxes - num_boxes, 4))))
     padded_obj_labels = np.concatenate((obj_labels, np.zeros(num_max_boxes - num_boxes)), axis=0)
@@ -293,11 +306,11 @@ def _to_boxes_and_masks(features, boxes, obj_labels, segments, num_max_boxes):
 
     mask = np.concatenate((np.ones(num_boxes), np.zeros(num_max_boxes - num_boxes)), axis=0)
 
-    return padded_features, padded_boxes, padded_obj_labels, padding_segments, mask
+    return padded_poses, padded_features, padded_boxes, padded_obj_labels, padding_segments, mask
 
 class VCGLoader:
     def __init__(self, examples, labels, records, split, tokenizer,
-                 include_image=True, num_max_boxes=15, only_use_relevant_dets=True, add_image_as_a_box=True):
+                 include_pose=True, include_image=True, num_max_boxes=15, only_use_relevant_dets=True, add_image_as_a_box=True):
         """
 
         :param split: train, val, or test
@@ -314,6 +327,7 @@ class VCGLoader:
         self.split = split
         self.tokenizer = tokenizer
         self.include_image = include_image
+        self.include_pose = include_pose
         self.num_max_boxes = num_max_boxes
         self.add_image_as_a_box = add_image_as_a_box
         self.only_use_relevant_dets = only_use_relevant_dets
@@ -370,7 +384,7 @@ class VCGLoader:
             subjects = np.zeros(len(objects), dtype=bool)
 
             for tag in list(item['person2name'].keys()):
-                tag = int(tag) - 1
+                tag = int(tag) - 1 # ing(tag) - 1 because tag starts from 1
                 if tag >= 0 and tag < len(objects):  # sanity check
                     dets2use[tag] = True
 
@@ -409,7 +423,7 @@ class VCGLoader:
         event_inference_example = torch.tensor(self.examples[index])
         labels = torch.tensor(self.labels[index])
         record = self.records[index]
-        if not self.include_image:
+        if not self.include_image and not self.include_pose:
             return event_inference_example, labels
 
         #######
@@ -420,6 +434,7 @@ class VCGLoader:
         # Load boxes and their features.
         with open(os.path.join(VCR_IMAGES_DIR, record['metadata_fn']), 'r') as f:
             metadata = json.load(f)
+        #  MARK - start from here, need to debug to see what is going on
         dets2use, old_det_to_new_ind, subjects = self.get_dets_to_use(record)
         # [nobj, 14, 14]
         segms = np.stack([make_mask(mask_size=14, box=metadata['boxes'][i],
@@ -432,6 +447,10 @@ class VCGLoader:
         with open(os.path.join(VCR_FEATURES_DIR,id)+'.pkl','rb') as p:
             features_dict = pickle.load(p)
         features = features_dict['object_features'][dets2use]
+        with open(os.path.join(VCR_POSE_DIR, id) + '.pkl', 'rb') as p:
+            pose_dict = pickle.load(p)
+        poses = pose_dict['pose_features'][dets2use]
+
         boxes = np.array(metadata['boxes'])[dets2use, :-1]
 
         # create id labels to help ground person in the image
@@ -453,7 +472,7 @@ class VCGLoader:
             boxes = np.row_stack((np.array([0, 0, w, h]), boxes))
             segms = np.concatenate((np.ones((1, 14, 14), dtype=np.float32), segms), 0)
             obj_labels = [self.coco_obj_to_ind['__background__']] + obj_labels
-            person_ids = [self.tokenizer.convert_tokens_to_ids(['<|det0|>'])[0]] + person_ids
+            person_ids = [self.tokenizer.convert_tokens_to_ids(['<|det0|>'])[0]] + person_ids # MARK - verify later
             subject_ids = [0] + subject_ids
 
         if not np.all((boxes[:, 0] >= 0.) & (boxes[:, 0] < boxes[:, 2])):
@@ -465,11 +484,12 @@ class VCGLoader:
         if not np.all((boxes[:, 3] <= h)):
             boxes[:, 3] = np.clip(boxes[:, 3], None, h)
 
-        padded_features, padded_boxes, padded_obj_labels, padded_segments, box_masks = \
-            _to_boxes_and_masks(features, boxes, obj_labels, segms, self.num_max_boxes)
+        padded_poses, padded_features, padded_boxes, padded_obj_labels, padded_segments, box_masks = \
+            _to_boxes_and_masks(poses, features, boxes, obj_labels, segms, self.num_max_boxes)
         person_ids = _pad_ids(person_ids, self.num_max_boxes)
         subject_ids = _pad_ids(subject_ids, self.num_max_boxes)
 
+        poses = torch.Tensor(padded_poses)
         features = torch.Tensor(padded_features)
         boxes = torch.Tensor(padded_boxes)
         boxes_mask = torch.LongTensor(box_masks)
@@ -477,6 +497,10 @@ class VCGLoader:
         segments = torch.Tensor(padded_segments)
         person_ids = torch.LongTensor(person_ids)
         subject_ids = torch.LongTensor(subject_ids)
-
-        return event_inference_example, labels, features, boxes, boxes_mask, objects, segments, person_ids, subject_ids
+        if not self.include_pose:
+            return event_inference_example, labels, features, boxes, boxes_mask, objects, segments, person_ids, subject_ids
+        elif not self.include_image:
+            return event_inference_example, labels, poses, boxes, boxes_mask, objects, segments, person_ids, subject_ids
+        else:
+            return event_inference_example, labels, poses, features, boxes, boxes_mask, objects, segments, person_ids, subject_ids
 
