@@ -408,7 +408,7 @@ def main():
                         help="Overwrite the cached training and evaluation sets")
     parser.add_argument('--cache_postfix', type=str, default=None,
                         help="postfix for cache")
-    parser.add_argument('--seed', type=int, default=42,
+    parser.add_argument('--seed', type=int, default=0,
                         help="random seed for initialization")
 
     parser.add_argument('--fp16', action='store_true',

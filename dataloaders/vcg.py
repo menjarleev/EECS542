@@ -294,9 +294,10 @@ def _to_boxes_and_masks(poses, features, boxes, obj_labels, segments, num_max_bo
     if num_boxes > num_max_boxes:
         return poses[:num_max_boxes,:], features[:num_max_boxes,:], boxes[:num_max_boxes,:], obj_labels[:num_max_boxes], \
                segments[:num_max_boxes,:], [1] * num_max_boxes
-    d = len(features[0])
-    padded_poses = np.concatenate((poses, np.zeros((num_max_boxes - num_boxes, d))))
-    padded_features = np.concatenate((features, np.zeros((num_max_boxes - num_boxes, d))))
+    d_f = len(features[0])
+    d_p = len(poses[0])
+    padded_poses = np.concatenate((poses, np.zeros((num_max_boxes - num_boxes, d_p))))
+    padded_features = np.concatenate((features, np.zeros((num_max_boxes - num_boxes, d_f))))
     padded_boxes = np.concatenate((boxes, np.zeros((num_max_boxes - num_boxes, 4))))
     padded_obj_labels = np.concatenate((obj_labels, np.zeros(num_max_boxes - num_boxes)), axis=0)
 

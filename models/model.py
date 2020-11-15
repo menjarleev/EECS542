@@ -138,7 +138,7 @@ class GPT2VisionAttentiveTransformer(GPT2PreTrainedModel):
                 subject_embeddings = self.subject_embed(pack_subject_ids)
                 subject_embeddings = pad_sequence(subject_embeddings, boxes_mask.sum(1).tolist())
                 vision_embeddings = vision_embeddings + subject_embeddings
-            inputs_embeds[:, 17:vision_embeddings.size(1)+17, :] = vision_embeddings
+            inputs_embeds[:, 18:vision_embeddings.size(1)+18, :] = vision_embeddings
 
         # if aux_feats is not None:
         #     inputs_embeds[:,169] = aux_feats

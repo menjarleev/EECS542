@@ -2,6 +2,13 @@
 <project version="4">
   <component name="PublishConfigData" autoUpload="Always" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
+      <paths name="A">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/ubuntu/visual-comet" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="vc">
         <serverdata>
           <mappings>
